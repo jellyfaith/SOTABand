@@ -20,6 +20,7 @@ import { useUnsavedMarks } from '@/hooks/use-unsaved-marks'
 import { cn } from '@/lib/utils'
 import type { Resource, ResourceType, ToolResource } from '@/types/resources'
 
+import { apiDelete } from '@/services/api/client'
 interface ResourceSectionDef {
   type: ResourceType
   label: string
@@ -134,9 +135,8 @@ export function ResourceBrowser() {
     // 模型：确认后彻底删除
     if (resource.type === 'model') {
       if (!confirm(`确定删除模型 "${resource.name}"？此操作不可恢复。`)) return
-      const BASE_URL = ''
       try {
-        await fetch(`${BASE_URL}/api/model/${resource.id}`, { method: 'DELETE' })
+        await apiDelete(`/api/model/${resource.id}`)
         fetchModelsFromApi()
       } catch { /* ignore */ }
       return
@@ -144,9 +144,8 @@ export function ResourceBrowser() {
     // Agent：确认后彻底删除（数据/模型已在上方分支处理）
     if (resource.type !== 'agent') return
     if (!confirm(`确定删除 "${resource.name}"？此操作不可恢复。`)) return
-    const BASE_URL = ''
     try {
-      await fetch(`${BASE_URL}/api/agent/${resource.id}`, { method: 'DELETE' })
+      await apiDelete(`/api/agent/${resource.id}`)
       fetchAgentsFromApi()
     } catch { /* ignore */ }
   }

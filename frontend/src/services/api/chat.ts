@@ -2,26 +2,22 @@
 
 import type { IChatService } from '@/services/types'
 import type { Message, CreateMessageInput, InlineCard } from '@/types/chat'
-
-const BASE_URL = ''
+import { apiFetchRaw, apiPost, assertOk } from './client'
 
 export class ApiChatService implements IChatService {
-  private baseUrl: string
   private currentAbortController: AbortController | null = null
   private currentSessionId: string = 'default'
-
-  constructor(baseUrl?: string) {
-    this.baseUrl = baseUrl || BASE_URL
-  }
 
   async *sendMessage(input: CreateMessageInput): AsyncGenerator<Message> {
     // 创建新的 AbortController
     this.currentAbortController = new AbortController()
     this.currentSessionId = input.sessionId || 'default'
 
-    const response = await fetch(`${this.baseUrl}/api/chat/send`, {
+    // SSE：必须用 apiFetchRaw 拿原始 body 的 reader（不能先解析 JSON）。
+    // 但也必须 assertOk —— 否则错误响应会被当成事件流解析，最后报一句
+    // 毫无信息量的"没有收到结束事件"。
+    const response = await apiFetchRaw('/api/chat/send', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         content: input.content,
         attachments: input.attachments || [],
@@ -32,9 +28,7 @@ export class ApiChatService implements IChatService {
       signal: this.currentAbortController.signal,
     })
 
-    if (!response.ok) {
-      throw new Error(`API error: ${response.status} ${response.statusText}`)
-    }
+    await assertOk(response)
 
     const reader = response.body?.getReader()
     if (!reader) throw new Error('No response body')
@@ -140,13 +134,9 @@ export class ApiChatService implements IChatService {
     }
     // 调用后端 stop 端点
     try {
-      await fetch(`${this.baseUrl}/api/chat/stop`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sid }),
-      })
+      await apiPost('/api/chat/stop', { session_id: sid })
     } catch {
-      // 忽略网络错误
+      // 忽略网络错误 / 已停止
     }
   }
 }

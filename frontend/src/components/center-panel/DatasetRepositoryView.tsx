@@ -6,7 +6,7 @@ import { useWorkspaceDatasetStore } from '@/stores/workspace-dataset-store'
 import { ArrowLeft, Search, Trash2, Plus, Package, ChevronLeft, ChevronRight, ChevronDown, Loader2, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
-const BASE_URL = ''
+import { apiDelete } from '@/services/api/client'
 
 function getDatasetIcon(formats: string[]): string {
   const has = (ext: string) => formats.some(f => f.toLowerCase().includes(ext))
@@ -41,7 +41,7 @@ export function DatasetRepositoryView() {
     if (!confirm(`确定要删除数据集 "${id}" 吗？此操作不可逆，将清除所有关联文件。`)) return
     setDeleting(id)
     try {
-      await fetch(`${BASE_URL}/api/data/${id}`, { method: 'DELETE' })
+      await apiDelete(`/api/data/${id}`)
       removeDataset(id)
       await store.fetchDatasets()
     } catch { alert('删除失败') }

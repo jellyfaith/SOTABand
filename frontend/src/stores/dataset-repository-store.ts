@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-const BASE_URL = ''
+import { apiGet } from '@/services/api/client'
 
 export interface RepositoryDataset {
   id: string
@@ -47,9 +47,10 @@ export const useDatasetRepositoryStore = create<DatasetRepositoryState>((set, ge
   fetchDatasets: async () => {
     set({ loading: true })
     try {
-      const res = await fetch(`${BASE_URL}/api/data/repository`)
-      const data = await res.json()
-      const datasets = (data.datasets || []).map((d: Record<string, unknown>) => ({
+      const data = await apiGet<{ datasets: any[]; tag_stats?: Record<string, number> }>(
+        '/api/data/repository'
+      )
+      const datasets = (data.datasets || []).map((d: any) => ({
         id: d.id || '',
         name: d.name || d.id || '',
         version: d.version || '0.1.0',

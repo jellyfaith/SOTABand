@@ -14,6 +14,7 @@ export type ActiveView =
   | 'dataset-editor'
   | 'repository'
   | 'dataset-repository'
+  | 'networks'
   | 'settings'
   // 每个 Agent 独立的详情视图：形如 "agent-detail:{agentId}"
   // 使不同 Agent 各自拥有独立的标签页与界面，互不共享/覆盖。

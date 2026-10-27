@@ -13,9 +13,8 @@ import { useWorkspaceDatasetStore } from '@/stores/workspace-dataset-store'
 import { useUIStore } from '@/stores/ui-store'
 import { useToolEditorStore } from '@/stores/tool-editor-store'
 import { useTabIndent } from '@/hooks/use-tab-indent'
+import { apiFetchRaw, apiGet, apiPost, assertOk } from '@/services/api/client'
 import type { ToolResource } from '@/types/resources'
-
-const BASE_URL = ''
 
 interface InputField { name: string; type: string; required: boolean; default: string | null; desc: string }
 
@@ -99,8 +98,7 @@ export function ToolDetailView({ toolId }: { toolId?: string } = {}) {
 
   useEffect(() => {
     if (!tool) return
-    fetch(`${BASE_URL}/api/tool/${tool.id}`)
-      .then(r => r.json())
+    apiGet<any>(`/api/tool/${tool.id}`)
       .then(data => {
         setSpecMd(data.spec_md || '')
         const c = data.code || ''
@@ -124,14 +122,6 @@ export function ToolDetailView({ toolId }: { toolId?: string } = {}) {
       .catch(() => {})
   }, [tool])
 
-  if (!tool) {
-    return (
-      <div className="flex items-center justify-center h-full text-maia-text-muted text-sm">
-        请在左侧工具空间选择一个工具
-      </div>
-    )
-  }
-
   const inputs = parseInputs(specMd)
 
   const handleCodeChange = (val: string) => {
@@ -141,7 +131,7 @@ export function ToolDetailView({ toolId }: { toolId?: string } = {}) {
   }
 
   const runTests = async () => {
-    if (!editedCode.trim()) return
+    if (!tool || !editedCode.trim()) return
     setIsTesting(true)
     setError(null)
     setTestResults(null)
@@ -157,27 +147,18 @@ export function ToolDetailView({ toolId }: { toolId?: string } = {}) {
           try { params[f.name] = JSON.parse(val) } catch { params[f.name] = val.split(',').map(s => s.trim()) }
         } else params[f.name] = val
       })
-      const res = await fetch(`${BASE_URL}/api/tool/${tool.id}/execute`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ params }),
-      })
-      if (!res.ok) throw new Error((await res.json()).detail || `HTTP ${res.status}`)
-      const data = await res.json()
+      const data = await apiPost<any>(`/api/tool/${tool.id}/execute`, { params })
       setTestResults({ passed: [JSON.stringify(data, null, 2)], failed: data.status === 'failed' ? [data.result?.message || '执行失败'] : [] })
     } catch (e) { setError(String(e)) }
     setIsTesting(false)
   }
 
   const updateCode = async () => {
-    if (!editedCode.trim()) return
+    if (!tool || !editedCode.trim()) return
     setIsUpdating(true)
     setError(null)
     try {
-      const res = await fetch(`${BASE_URL}/api/tool/${tool.id}/save-code`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: editedCode }),
-      })
-      if (!res.ok) throw new Error((await res.json()).detail || `HTTP ${res.status}`)
+      await apiPost(`/api/tool/${tool.id}/save-code`, { code: editedCode })
       setCode(editedCode)
       setCodeModified(false)
       setTestResults(null)
@@ -204,9 +185,8 @@ export function ToolDetailView({ toolId }: { toolId?: string } = {}) {
     abortRef.current = controller
 
     try {
-      const res = await fetch(`${BASE_URL}/api/tool/${tool.id}/modify-and-debug`, {
+      const res = await apiFetchRaw(`/api/tool/${tool.id}/modify-and-debug`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           current_code: editedCode,
           request: req,
@@ -217,6 +197,7 @@ export function ToolDetailView({ toolId }: { toolId?: string } = {}) {
         }),
         signal: controller.signal,
       })
+      await assertOk(res)
 
       const reader = res.body?.getReader()
       if (!reader) throw new Error('No response body')
@@ -270,14 +251,12 @@ export function ToolDetailView({ toolId }: { toolId?: string } = {}) {
                     // 调试通过后自动保存代码到文件
                     const finalCode = payload.code
                     try {
-                      const saveRes = await fetch(`${BASE_URL}/api/tool/${tool.id}/save-code`, {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ code: finalCode, toolId: tool.id }),
+                      await apiPost(`/api/tool/${tool.id}/save-code`, {
+                        code: finalCode,
+                        toolId: tool.id,
                       })
-                      if (saveRes.ok) {
-                        setCodeModified(false)
-                        setTestResults(null)
-                      }
+                      setCodeModified(false)
+                      setTestResults(null)
                     } catch { /* ignore */ }
                   } else {
                     if (payload.code) { setEditedCode(payload.code); setCodeModified(true) }
@@ -307,11 +286,22 @@ export function ToolDetailView({ toolId }: { toolId?: string } = {}) {
     abortRef.current?.abort()
     setIsDebugging(false)
     // 通知后端停止
-    fetch(`${BASE_URL}/api/tool/auto-debug/stop`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tool_id: tool?.id }),
-    }).catch(() => {})
+    apiPost('/api/tool/auto-debug/stop', { tool_id: tool?.id }).catch(() => {})
   }, [tool])
+
+  // ⚠️ 这个提前 return **必须放在所有 hooks 之后**。
+  // 之前它在 hooks 之前，导致下面的 useCallback 变成"条件调用" —— 当 tool 从
+  // 有到无时 React 会抛 "Rendered fewer hooks than expected"。oxlint 的
+  // react-hooks/rules-of-hooks 抓到了这个真实缺陷。
+  // 它引用的只有 tool（判空）和下面的各 handle* 函数体内部才解引用 tool 的属性，
+  // 所以挪到这里行为不变。
+  if (!tool) {
+    return (
+      <div className="flex items-center justify-center h-full text-maia-text-muted text-sm">
+        请在左侧工具空间选择一个工具
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col h-full bg-maia-surface">
@@ -651,11 +641,10 @@ function WorkspaceFilePicker({ paramName, currentValue, onClose, onSelect }: {
       try {
         let dataPath = resolveDataPath(id)
         if (!dataPath) {
-          const detail = await (await fetch(`/api/data/${id}`)).json()
+          const detail = await apiGet<any>(`/api/data/${id}`)
           dataPath = (detail && detail.data_path) || ''
         }
-        const res = await fetch(`/api/data/${id}/files`)
-        const data = await res.json()
+        const data = await apiGet<any>(`/api/data/${id}/files`)
         const files = (data.files || []).map((f: { name: string; path: string; size?: number }) => ({
           ...f,
           path: f.path.startsWith(dataPath) ? f.path : `${dataPath}/${f.path}`,
@@ -755,10 +744,7 @@ function ToolTagsEditor({ toolId, tags: initialTags }: { toolId: string; tags: s
   const saveTags = async (updated: string[]) => {
     setSaving(true)
     try {
-      await fetch(`/api/tool/${toolId}/tags`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tags: updated }),
-      })
+      await apiPost(`/api/tool/${toolId}/tags`, { tags: updated })
       setTags(updated)
     } catch { /* ignore */ }
     setSaving(false)

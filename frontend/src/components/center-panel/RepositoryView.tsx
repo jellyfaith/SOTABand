@@ -10,8 +10,8 @@ import { useResourceStore } from '@/stores/resource-store'
 import { useRepositoryStore, getFilteredTools, type RepositoryTool } from '@/stores/repository-store'
 import { useWorkspaceToolStore } from '@/stores/workspace-tool-store'
 
+import { apiGet, apiPost, apiDelete } from '@/services/api/client'
 const PAGE_SIZE_OPTIONS = [8, 12, 16, 24, 32]
-const BASE_URL = ''
 
 /** 工具图标映射 */
 function getToolIcon(id: string): string {
@@ -60,13 +60,11 @@ export function RepositoryView() {
   const handleDelete = async (tool: RepositoryTool) => {
     if (!confirm(`确定删除工具 "${tool.id}"？\n此操作不可撤销，将永久删除代码文件和注册记录。`)) return
     try {
-      const res = await fetch(`${BASE_URL}/api/tool/${tool.id}`, { method: 'DELETE' })
-      if (res.ok) {
-        // 同步从工具空间中移除
-        const { useWorkspaceToolStore } = await import('@/stores/workspace-tool-store')
-        useWorkspaceToolStore.getState().removeTool(tool.id)
-        fetchTools()
-      }
+      await apiDelete(`/api/tool/${tool.id}`)
+      // 同步从工具空间中移除
+      const { useWorkspaceToolStore } = await import('@/stores/workspace-tool-store')
+      useWorkspaceToolStore.getState().removeTool(tool.id)
+      fetchTools()
     } catch { /* ignore */ }
   }
 
@@ -80,9 +78,9 @@ export function RepositoryView() {
 
   const handleAddWithDepCheck = async (tool: RepositoryTool) => {
     try {
-      const res = await fetch(`${BASE_URL}/api/tool/${tool.id}/check-deps`)
-      if (!res.ok) { doImport(tool); return }
-      const data = await res.json()
+      const data = await apiGet<{ missing?: string[]; install?: string[]; env?: string }>(
+        `/api/tool/${tool.id}/check-deps`
+      )
       const missing: string[] = data.missing || []
       if (missing.length === 0) {
         doImport(tool)
@@ -103,12 +101,9 @@ export function RepositoryView() {
     if (!depDialog) return
     setDepDialog({ ...depDialog, installing: true, error: '' })
     try {
-      const res = await fetch(`${BASE_URL}/api/tool/${depDialog.tool.id}/install-deps`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dependencies: depDialog.install }),
-      })
-      const data = await res.json().catch(() => ({}))
+      const data = await apiPost<any>(`/api/tool/${depDialog.tool.id}/install-deps`, {
+        dependencies: depDialog.install,
+      }).catch(() => ({}))
       const results: Array<{ dep: string; success: boolean }> = data.results || []
       const failed = results.filter(r => !r.success).map(r => r.dep)
       if (failed.length > 0 && results.length > 0) {

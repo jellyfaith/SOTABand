@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { useUIStore, type ActiveView } from '@/stores/ui-store'
 import { useToolEditorStore } from '@/stores/tool-editor-store'
 import { useChatStore } from '@/stores/chat-store'
+import { apiBlob } from '@/services/api/client'
 import {
   Database,
   Wrench,
@@ -352,32 +353,38 @@ function FileOutput({ data }: { data: Record<string, unknown> }) {
   const fileName = filePath ? (filePath.split('/').pop() || filePath) : ''
   const ext = fileName.slice(fileName.lastIndexOf('.')).toLowerCase()
   const isAudio = AUDIO_EXTENSIONS.includes(ext)
-
-  if (!filePath) return <p className="text-xs text-gray-400">文件路径不可用</p>
-
-  const downloadUrl = `/api/file/download?path=${encodeURIComponent(filePath)}`
+  const downloadUrl = filePath
+    ? `/api/file/download?path=${encodeURIComponent(filePath)}`
+    : ''
 
   // 音频文件通过 fetch → Blob → ObjectURL 加载，避免跨域和 Range 请求问题
   useEffect(() => {
-    if (!isAudio) return
+    if (!filePath || !isAudio) {
+      setAudioUrl(null)
+      setLoading(false)
+      return
+    }
     let cancelled = false
+    let objectUrl: string | null = null
     setLoading(true)
-    fetch(`/api/file/download?path=${encodeURIComponent(filePath)}`)
-      .then(res => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        return res.blob()
-      })
+    apiBlob(`/api/file/download?path=${encodeURIComponent(filePath)}`)
       .then(blob => {
         if (!cancelled) {
-          setAudioUrl(URL.createObjectURL(blob))
+          objectUrl = URL.createObjectURL(blob)
+          setAudioUrl(objectUrl)
           setLoading(false)
         }
       })
       .catch(() => {
         if (!cancelled) setLoading(false)
       })
-    return () => { cancelled = true }
-  }, [filePath])
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [filePath, isAudio])
+
+  if (!filePath) return <p className="text-xs text-gray-400">文件路径不可用</p>
 
   return (
     <div className="mt-2 rounded-lg border border-maia-border overflow-hidden">

@@ -4,6 +4,7 @@ import { MockResourceService } from '@/services/mock/resources'
 import { agentApi } from '@/services/api/agent'
 import { toolApi } from '@/services/api/tool'
 import { dataApi } from '@/services/api/data'
+import { apiGet } from '@/services/api/client'
 
 const resourceService = new MockResourceService()
 
@@ -67,12 +68,11 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
     set({ isLoading: true })
 
     // 优先从真实 API 加载
-    const BASE_URL = ''
     const apiResults = await Promise.allSettled([
       toolApi.list(),
       agentApi.list(),
       dataApi.list(true),   // 只加载本机有数据的数据集
-      fetch(`${BASE_URL}/api/model/list`).then(r => r.json()),
+      apiGet<{ models: any[] }>('/api/model/list'),
     ])
     const [toolResult, agentResult, dataResult, modelResult] = apiResults
 
@@ -122,12 +122,15 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
     // 模型
     if (modelResult.status === 'fulfilled' && Array.isArray(modelResult.value?.models) && modelResult.value.models.length > 0) {
       set({
-        modelResources: modelResult.value.models.map((m: Record<string, unknown>) => ({
+        // `as Resource[]`：后端 model 字段与前端 ModelResource 并非逐字段对应
+        // （前端还要求 framework / modelType / weightPath 等，后端未必都给），
+        // 这里按"宽松填充"处理，缺的字段用默认值兜住。
+        modelResources: modelResult.value.models.map((m: any) => ({
           id: m.id as string, name: (m.name as string) || (m.id as string), description: '', type: 'model' as const,
           version: (m.version as string) || '0.1.0', status: 'active' as const, createdAt: (m.created_at as string) || '',
           updatedAt: '', tags: (m.tags as string[]) || [], format: (m.framework as string) || '',
           filePath: (m.model_path as string) || '', fileSize: 0, source: 'upload' as const, lineage: [],
-        }))
+        })) as unknown as Resource[],
       })
     }
 
@@ -200,17 +203,15 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
 
   fetchModelsFromApi: async () => {
     try {
-      const BASE_URL = ''
-      const res = await fetch(`${BASE_URL}/api/model/list`)
-      const data = await res.json()
+      const data = await apiGet<{ models: any[] }>('/api/model/list')
       if (Array.isArray(data.models) && data.models.length > 0) {
-        set({ modelResources: data.models.map((m: Record<string, unknown>) => ({
+        set({ modelResources: data.models.map((m: any) => ({
           id: m.id as string, name: (m.name as string) || (m.id as string), description: '',
           type: 'model' as const, version: (m.version as string) || '0.1.0', status: 'active' as const,
           createdAt: (m.created_at as string) || '', updatedAt: '',
           tags: (m.tags as string[]) || [], format: (m.framework as string) || '',
           filePath: (m.model_path as string) || '', fileSize: 0, source: 'upload' as const, lineage: [],
-        })) })
+        })) as unknown as Resource[] })
       }
     } catch { /* ignore */ }
   },

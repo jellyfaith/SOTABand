@@ -12,10 +12,9 @@ import { agentApi } from '@/services/api/agent'
 import { useTabIndent } from '@/hooks/use-tab-indent'
 import type { AgentResource } from '@/types/resources'
 import type { InlineCard as InlineCardType } from '@/types/chat'
+import { apiFetchRaw, apiGet, apiPost, assertOk } from '@/services/api/client'
 import { InlineCard } from './InlineCard'
 import { WorkspaceFilePicker } from './WorkspaceFilePicker'
-
-const BASE_URL = ''
 
 export function AgentDetailView({ agentId }: { agentId?: string } = {}) {
   const selectedResource = useResourceStore((s) => s.selectedResource)
@@ -76,8 +75,7 @@ export function AgentDetailView({ agentId }: { agentId?: string } = {}) {
   // Fetch agent details on mount / agent change
   useEffect(() => {
     if (!agent) return
-    fetch(`${BASE_URL}/api/agent/${agent.id}`)
-      .then((r) => r.json())
+    apiGet<any>(`/api/agent/${agent.id}`)
       .then((data) => {
         setSpecMd(data.spec_md || '')
         setCode(data.code || '')
@@ -102,8 +100,7 @@ export function AgentDetailView({ agentId }: { agentId?: string } = {}) {
   // 读取 Agent 运行状态
   useEffect(() => {
     if (!agent) return
-    fetch(`${BASE_URL}/api/agent/${agent.id}/status`)
-      .then((r) => r.json())
+    apiGet<any>(`/api/agent/${agent.id}/status`)
       .then((d) => setRunning(!!d.running))
       .catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -121,17 +118,14 @@ export function AgentDetailView({ agentId }: { agentId?: string } = {}) {
   const loadServiceInfo = async () => {
     if (!agent || !isWebService) return
     try {
-      const res = await fetch(`${BASE_URL}/api/agent/${agent.id}/service`)
-      if (res.ok) {
-        const data = await res.json()
-        setServiceInfo(data)
-        // 默认选中第一个 API
-        const apis = data.apis || []
-        if (apis.length && !apis.some((a: { name: string }) => a.name === testApi)) {
-          setTestApi(apis[0].name)
-        }
+      const data = await apiGet<any>(`/api/agent/${agent.id}/service`)
+      setServiceInfo(data)
+      // 默认选中第一个 API
+      const apis = data.apis || []
+      if (apis.length && !apis.some((a: { name: string }) => a.name === testApi)) {
+        setTestApi(apis[0].name)
       }
-    } catch { /* ignore */ }
+    } catch { /* 服务信息拉不到时保持原状态 */ }
   }
 
   // 发起 API 测试（走后端代理）
@@ -139,12 +133,10 @@ export function AgentDetailView({ agentId }: { agentId?: string } = {}) {
     if (!agent || !testApi || testing) return
     setTesting(true); setTestResult('')
     try {
-      const res = await fetch(`${BASE_URL}/api/agent/${agent.id}/test-api`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ api_name: testApi, params: testParams }),
+      const data = await apiPost<any>(`/api/agent/${agent.id}/test-api`, {
+        api_name: testApi,
+        params: testParams,
       })
-      const data = await res.json()
       setTestResult(JSON.stringify(data, null, 2))
     } catch (e) {
       setTestResult(`请求失败: ${String(e)}`)
@@ -213,7 +205,7 @@ export function AgentDetailView({ agentId }: { agentId?: string } = {}) {
   const start = async () => {
     setLoading(true)
     try {
-      await fetch(`${BASE_URL}/api/agent/${agent.id}/start`, { method: 'POST' })
+      await apiPost(`/api/agent/${agent.id}/start`)
       setRunning(true)
       setMessages([])
       setStreaming('')
@@ -226,7 +218,7 @@ export function AgentDetailView({ agentId }: { agentId?: string } = {}) {
   const stop = async () => {
     setLoading(true)
     try {
-      await fetch(`${BASE_URL}/api/agent/${agent.id}/stop`, { method: 'POST' })
+      await apiPost(`/api/agent/${agent.id}/stop`)
       setRunning(false)
       if (isWebService) setServiceInfo((s) => ({ ...s, running: false, port: undefined }))
     } catch { /* ignore */ }
@@ -236,7 +228,7 @@ export function AgentDetailView({ agentId }: { agentId?: string } = {}) {
   const restart = async () => {
     setLoading(true)
     try {
-      await fetch(`${BASE_URL}/api/agent/${agent.id}/restart`, { method: 'POST' })
+      await apiPost(`/api/agent/${agent.id}/restart`)
       setRunning(true)
       setMessages([])
       setStreaming('')
@@ -261,13 +253,12 @@ export function AgentDetailView({ agentId }: { agentId?: string } = {}) {
     const localCards: InlineCardType[] = []
 
     try {
-      const res = await fetch(`${BASE_URL}/api/agent/${agent.id}/execute`, {
+      const res = await apiFetchRaw(`/api/agent/${agent.id}/execute`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params),
         signal: controller.signal,
       })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      await assertOk(res)
 
       const reader = res.body!.getReader()
       const decoder = new TextDecoder()
@@ -563,8 +554,7 @@ export function AgentDetailView({ agentId }: { agentId?: string } = {}) {
                         <button
                           onClick={async () => {
                             try {
-                              const r = await fetch(`${BASE_URL}/api/agent/${agent!.id}/api-doc`)
-                              const d = await r.json()
+                              const d = await apiGet<any>(`/api/agent/${agent!.id}/api-doc`)
                               // 在新窗口以 Markdown 原文展示（可复制/另存）
                               const w = window.open('', '_blank')
                               if (w) {
@@ -580,7 +570,7 @@ export function AgentDetailView({ agentId }: { agentId?: string } = {}) {
                           查看 API 文档
                         </button>
                         <a
-                          href={`${BASE_URL}/api/agent/${agent!.id}/api-doc/download`}
+                          href={`/api/agent/${agent!.id}/api-doc/download`}
                           className="text-[11px] text-maia-accent hover:underline"
                           download
                         >

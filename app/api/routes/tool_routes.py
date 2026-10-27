@@ -5,6 +5,7 @@ import json as _json
 import os as _os
 import re
 import shutil
+import tempfile
 import time as _time
 from datetime import datetime
 from pathlib import Path as _Path
@@ -140,7 +141,7 @@ created: {日期}
 6. 除非用户明确写了标记，否则不添加系统API或工具引用
 7. 多模式工具的每个模式参数「必填」列必须明确写「是」或「否」，禁止使用「条件（模式X）」「仅模式X」等模糊表述"""
 
-UPLOAD_DIR = _Path("/tmp/sotaband-uploads")
+UPLOAD_DIR = _Path(tempfile.gettempdir()) / "sotaband-uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 

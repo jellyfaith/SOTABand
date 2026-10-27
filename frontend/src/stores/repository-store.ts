@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-const BASE_URL = ''
+import { apiGet } from '@/services/api/client'
 
 export interface RepositoryTool {
   id: string
@@ -42,9 +42,10 @@ export const useRepositoryStore = create<RepositoryState>((set, get) => ({
   fetchTools: async () => {
     set({ loading: true })
     try {
-      const res = await fetch(`${BASE_URL}/api/tool/repository`)
-      const data = await res.json()
-      const tools = (data.tools || []).map((t: Record<string, unknown>) => ({
+      const data = await apiGet<{ tools: any[]; tag_stats?: Record<string, number> }>(
+        '/api/tool/repository'
+      )
+      const tools = (data.tools || []).map((t: any) => ({
         id: t.id || '',
         name: t.name || t.id || '',
         version: t.version || '0.1.0',
