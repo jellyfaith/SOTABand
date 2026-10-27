@@ -7,10 +7,10 @@
 配置优先级: 环境变量 > .env 文件 > 代码默认值
 """
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
-import os
-from typing import Optional
+
 
 # 自动加载项目根目录的 .env 文件
 def _load_dotenv():
@@ -312,7 +312,7 @@ class DoubaoConfig:
     model: str = field(default_factory=lambda: os.getenv("DOUBAO_MODEL", "doubao-pro-32k"))
 
 
-def get_llm_api_config(provider: str = None) -> dict:
+def get_llm_api_config(provider: str | None = None) -> dict:
     """API 调用：返回 LLM 配置（含 api_key）
 
     provider 缺省时使用当前默认 provider（LLM_PROVIDER 或 deepseek）。
@@ -327,7 +327,7 @@ def get_llm_api_config(provider: str = None) -> dict:
     }
 
 
-def get_llm_config(provider: str = None) -> LLMConfig:
+def get_llm_config(provider: str | None = None) -> LLMConfig:
     """根据 provider 返回对应的 LLM 配置
 
     所有 OpenAI 兼容协议的服务商统一由 LLMConfig 承载（含豆包/火山方舟，
@@ -342,13 +342,30 @@ def get_llm_config(provider: str = None) -> LLMConfig:
 
 @dataclass
 class StorageConfig:
-    """存储配置"""
+    """存储配置
 
-    backend: str = "sqlite"  # sqlite | postgresql | mysql
-    database_url: str = "sqlite:///sotaband.db"
+    ``database_url`` 决定持久化后端（需求 8.1/8.2 引入）：
+
+    - 开发（默认）：``sqlite+aiosqlite:///./storage/sotaband.db`` —— 零配置，
+      无需安装任何数据库服务；
+    - 生产/压测：``postgresql+psycopg://user:pass@host:5432/sotaband``
+      —— 需 ``pip install -e ".[postgres]"``。
+
+    两种库共用同一套 Alembic 迁移，schema 不会漂移。选型与可移植性约束见
+    ``docs/design-08-schema.md`` §6。
+
+    ⚠️ 该字段此前声明但全库无人引用，属于预留未实现；本次起正式启用。
+    """
+
+    backend: str = field(default_factory=lambda: os.getenv("STORAGE_BACKEND", "sqlite"))
+    database_url: str = field(
+        default_factory=lambda: os.getenv(
+            "DATABASE_URL", "sqlite+aiosqlite:///./storage/sotaband.db"
+        )
+    )
     file_store_path: str = "./data/files"
     cache_backend: str = "memory"  # memory | redis
-    redis_url: Optional[str] = None
+    redis_url: str | None = None
 
 
 @dataclass
@@ -390,7 +407,7 @@ class ObservabilityConfig:
     metrics_port: int = 9090
     tracing_enabled: bool = True
     tracing_backend: str = "otel"  # otel | jaeger | zipkin
-    alert_webhook_url: Optional[str] = None
+    alert_webhook_url: str | None = None
 
 
 @dataclass
@@ -401,7 +418,142 @@ class AppConfig:
     debug: bool = False
     api_host: str = "0.0.0.0"
     api_port: int = 8001
-    cors_origins: list = field(default_factory=lambda: ["*"])
+    #: CORS 允许来源。**必须是显式列表，不能用 `*`**。
+    #:
+    #: 浏览器规范下 `Access-Control-Allow-Origin: *` 与 `allow_credentials=True`
+    #: 不能共存 —— 一旦上 Cookie 会话，通配符会让跨域请求静默失败。
+    #: 开发期前端走 Vite 的 /api 代理（同源），本列表主要用于生产独立部署场景。
+    cors_origins: list = field(
+        default_factory=lambda: [
+            o.strip()
+            for o in os.getenv(
+                "SOTABAND_CORS_ORIGINS",
+                # 开发期默认允许的两个前端来源（Docker 版 5173 / 本机 8001）
+                "http://localhost:5173,http://127.0.0.1:5173,"
+                "http://localhost:8001,http://127.0.0.1:8001",
+            ).split(",")
+            if o.strip()
+        ]
+    )
+
+
+@dataclass
+class AuthConfig:
+    """认证与会话配置（需求 8.1）。
+
+    设计见 ``docs/design-08-01-auth.md``；契约见
+    ``docs/contract-08-auth-network.md`` §3.4。
+
+    ⚠️ ``cookie_secure`` 必须按环境条件开启：开发是 ``http://localhost``，
+    硬编码 Secure 会让浏览器丢弃 Cookie；生产 https 则必须开。
+    """
+
+    #: Cookie 名（HttpOnly + SameSite）
+    cookie_name: str = field(
+        default_factory=lambda: os.getenv("SOTABAND_SESSION_COOKIE", "sotaband_session")
+    )
+    #: 生产 https 环境置 1；开发 http 保持 0
+    cookie_secure: bool = field(
+        default_factory=lambda: os.getenv("SOTABAND_COOKIE_SECURE", "0")
+        .strip()
+        .lower()
+        in ("1", "true", "yes")
+    )
+    cookie_samesite: str = field(
+        default_factory=lambda: os.getenv("SOTABAND_COOKIE_SAMESITE", "lax")
+    )
+    #: 会话绝对有效期（天）
+    session_ttl_days: int = field(
+        default_factory=lambda: int(os.getenv("SOTABAND_SESSION_TTL_DAYS", "30"))
+    )
+    #: bcrypt work factor。12 ≈ 250ms/次，需在目标机器实测标定
+    bcrypt_rounds: int = field(
+        default_factory=lambda: int(os.getenv("SOTABAND_BCRYPT_ROUNDS", "12"))
+    )
+    #: 单账号连续失败次数上限与统计窗口
+    login_max_attempts_per_account: int = field(
+        default_factory=lambda: int(os.getenv("SOTABAND_LOGIN_MAX_ATTEMPTS", "5"))
+    )
+    login_window_seconds: int = field(
+        default_factory=lambda: int(os.getenv("SOTABAND_LOGIN_WINDOW_SECONDS", "300"))
+    )
+    login_lock_seconds: int = field(
+        default_factory=lambda: int(os.getenv("SOTABAND_LOGIN_LOCK_SECONDS", "900"))
+    )
+    #: 登录的 IP 维度限流（防单机 spraying；账号维度防定向爆破）
+    login_ip_max_per_window: int = field(
+        default_factory=lambda: int(os.getenv("SOTABAND_LOGIN_IP_MAX", "20"))
+    )
+    login_ip_window_seconds: int = field(
+        default_factory=lambda: int(os.getenv("SOTABAND_LOGIN_IP_WINDOW", "300"))
+    )
+    #: 每 IP 每小时注册次数上限
+    register_max_per_ip_hour: int = field(
+        default_factory=lambda: int(os.getenv("SOTABAND_REGISTER_MAX_PER_HOUR", "5"))
+    )
+    #: 密码策略（用户 2026-10-27 指定：**字母 + 数字，8–20 位**）
+    #:
+    #: 长度按**字符数**计（此前是按 UTF-8 字节数）。对用户来说"8-20 位"才是能
+    #: 理解的概念，"至少 8 字节、中文按 3 字节计"解释起来非常别扭。
+    #: bcrypt 的 72 字节硬上限仍然守着 —— 见 ``core.auth.passwords.BCRYPT_HARD_LIMIT``。
+    password_min_length: int = field(
+        default_factory=lambda: int(os.getenv("SOTABAND_PASSWORD_MIN_LENGTH", "8"))
+    )
+    password_max_length: int = field(
+        default_factory=lambda: int(os.getenv("SOTABAND_PASSWORD_MAX_LENGTH", "20"))
+    )
+
+    #: 改密码失败的账号维度限流。
+    #:
+    #: 攻击者只要持有一个**有效会话**（比如窃取的 Cookie），就能用改密接口反复
+    #: 试「当前密码」—— 这是一个容易被忽略的爆破信道。账号维度计数挡住它。
+    #: 窗口给 1 小时（比登录宽松）：正常用户偶尔会输错当前密码。
+    password_change_max_failures: int = field(
+        default_factory=lambda: int(
+            os.getenv("SOTABAND_PASSWORD_CHANGE_MAX_FAILURES", "5")
+        )
+    )
+    password_change_window_seconds: int = field(
+        default_factory=lambda: int(
+            os.getenv("SOTABAND_PASSWORD_CHANGE_WINDOW", "3600")
+        )
+    )
+
+
+@dataclass
+class WorkloadConfig:
+    """工作负载身份配置 —— Agent 相互通信（PRD FR-N7 / FR-N8）。
+
+    Agent 之间的调用**不使用**用户会话 Cookie，而是用从 ``installation`` 派生的
+    独立短期凭证。设计见 ``core/auth/workload.py`` 的模块文档。
+
+    ⚠️ ``secret`` 生产环境**必须**显式配置：未配置时进程启动会随机生成，
+    重启后所有凭证失效，且多 worker 之间互相不认。
+    """
+
+    #: HMAC 签名密钥（``SOTABAND_WORKLOAD_SECRET``）
+    secret: str = field(
+        default_factory=lambda: os.getenv("SOTABAND_WORKLOAD_SECRET", "")
+    )
+    #: 凭证有效期（秒）。PRD 要求"短期"—— 默认 10 分钟
+    ttl_seconds: int = field(
+        default_factory=lambda: int(os.getenv("SOTABAND_WORKLOAD_TTL", "600"))
+    )
+
+    #: 单个安装实例的调用速率上限（每窗口次数）。
+    #:
+    #: FR-N7 的遗留项之一：没有速率限制时，一个写错的 Agent 循环调用能把目标
+    #: Agent 打到过载，而目标方**无法拒绝**（白名单已放行）。这是 Agent 之间的
+    #: "吵闹邻居"问题，和 HTTP 层的 DoS 防护是两件事。
+    #:
+    #: 按**调用方安装实例**计数（不是 IP、不是用户）：滥用主体是某个跑飞的 Agent，
+    #: 而它正好对应一个 installation。默认 120 次/分钟，足够正常协作，挡得住死循环。
+    invoke_max_per_window: int = field(
+        default_factory=lambda: int(os.getenv("SOTABAND_INVOKE_MAX_PER_WINDOW", "120"))
+    )
+    invoke_window_seconds: int = field(
+        default_factory=lambda: int(os.getenv("SOTABAND_INVOKE_WINDOW", "60"))
+    )
 
 
 @dataclass
@@ -409,6 +561,8 @@ class Settings:
     """全局配置"""
 
     app: AppConfig = field(default_factory=AppConfig)
+    auth: AuthConfig = field(default_factory=AuthConfig)
+    workload: WorkloadConfig = field(default_factory=WorkloadConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     doubao: DoubaoConfig = field(default_factory=DoubaoConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
